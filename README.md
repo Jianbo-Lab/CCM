@@ -1,6 +1,6 @@
 # CCM
 
-Code for replicating the experiments in the paper [Kernel Feature Selection via Conditional Covariance Minimization](https://papers.nips.cc/paper/7270-kernel-feature-selection-via-conditional-covariance-minimization.pdf) by Jianbo Chen$^\*$, Mitchell Stern$^\*$, Martin J. Wainwright, Michael I. Jordan. ($*$ indicates equal contribution)
+Code for replicating the experiments in the paper [Kernel Feature Selection via Conditional Covariance Minimization](https://papers.nips.cc/paper/7270-kernel-feature-selection-via-conditional-covariance-minimization.pdf) by Jianbo Chen\*, Mitchell Stern\*, Martin J. Wainwright, Michael I. Jordan. (\* indicates equal contribution)
 
 ## Dependencies
 The code for CCM runs with Python and requires Tensorflow of version 1.2.1 or higher. Please `pip install` the following packages:
