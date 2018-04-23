@@ -73,7 +73,8 @@ class CCM(object):
             X,
             Y, 
             transform_Y,
-            epsilon 
+            epsilon,
+            D_approx = None
     ): 
 
         assert isinstance(X, np.ndarray)
@@ -120,13 +121,47 @@ class CCM(object):
             self.w = tf.placeholder(tf.float64, shape=d) 
             self.inputs = [self.w]
 
-            G_X_w = center(kernel_X(X * self.w))
+            if D_approx is None:
 
-            G_X_w += n * epsilon * np.eye(n)
+                G_X_w = center(kernel_X(X * self.w))
 
+                G_X_w += n * epsilon * np.eye(n)
+
+                G_X_w_inv = tf.matrix_inverse(G_X_w)
+
+            else:
+
+                U_w = kernel_X.random_features(X * self.w, D_approx)
+
+                V_w = tf.matmul(
+                        tf.subtract(
+                            tf.eye(n, dtype=tf.float64),
+                            tf.divide(
+                                tf.ones((n,n), dtype=tf.float64),
+                                tf.constant(float(n), dtype=tf.float64))),
+                        U_w)
+
+                # eq. 21, arXiv:1707.01164, omitting constant term
+                
+                G_X_w_inv = tf.matmul(
+                                tf.scalar_mul(
+                                    tf.constant(-1.0, dtype=tf.float64),
+                                    V_w),
+                                tf.matmul(
+                                    tf.matrix_inverse(
+                                        tf.add(
+                                            tf.matmul(
+                                                V_w,
+                                                V_w,
+                                                transpose_a=True),
+                                            tf.multiply(
+                                                tf.constant(n * epsilon, dtype=tf.float64),
+                                                tf.eye(D_approx, dtype=tf.float64)))),
+                                    V_w,
+                                    transpose_b=True))
 
             self.loss = tf.trace(tf.matmul(
-                    Y, tf.matmul(tf.matrix_inverse(G_X_w), Y), transpose_a=True))
+                    Y, tf.matmul(G_X_w_inv, Y), transpose_a=True))
 
             self.gradients = tf.gradients(self.loss, self.inputs)
 
@@ -172,7 +207,7 @@ class CCM(object):
         return inputs[0] 
 
 def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001, 
-    iterations = 1000, verbose = True): 
+    iterations = 1000, D_approx = None, verbose = True): 
     """
     This function carries out feature selection via CCM.
     Args:
@@ -189,6 +224,8 @@ def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001,
 
         iterations: number of iterations for optimization.
 
+        D_approx: optional, rank-D kernel approximation
+
         verbose: If print loss at each update.
 
     Return:
@@ -204,7 +241,7 @@ def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001,
     elif type_Y == 'categorical':
         transform_Y = 'one-hot'
 
-    fs = CCM(X, Y, transform_Y, epsilon)
+    fs = CCM(X, Y, transform_Y, epsilon, D_approx = D_approx)
     w = fs.solve_gradient_descent(num_features, learning_rate, iterations, verbose)
     if verbose:
         print('The weights on featurs are: ', w)
