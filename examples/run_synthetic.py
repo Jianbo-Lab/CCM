@@ -35,3 +35,11 @@ epsilon = 0.1; num_features = 4; type_Y = 'real-valued'
 rank = ccm.ccm(X, Y, num_features, type_Y, epsilon, verbose = False) 
 selected_feats = np.argsort(rank)[:4]
 print('The four features selected by CCM on the nonlinear regression dataset are features {}'.format(selected_feats))
+
+print('-------------------------------------------')
+print('Running CCM on the approximate nonlinear regression dataset...')
+X, Y = generate_data(n=100, datatype='regression_approx', seed = 0)
+epsilon = 0.1; num_features = 4; type_Y = 'real-valued'
+rank = ccm.ccm(X, Y, num_features, type_Y, epsilon, D_approx=5, verbose = False) 
+selected_feats = np.argsort(rank)[:4]
+print('The four features selected by CCM on the approximate nonlinear regression dataset are features {}'.format(selected_feats))
