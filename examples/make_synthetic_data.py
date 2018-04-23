@@ -60,4 +60,9 @@ def generate_data(n=100, datatype='', seed = 0):
 
         y = -2 * np.sin(2*X[:,0]) + np.maximum(X[:,1], 0) + X[:,2] + np.exp(-X[:,3]) + np.random.randn(n) 
 
+    elif datatype == 'regression_approx': 
+        X = np.random.randn(n, 10) 
+
+        y = -2 * np.sin(2*X[:,0]) + np.maximum(X[:,1], 0) + X[:,2] + np.exp(-X[:,3]) + np.random.randn(n) 
+
     return (X, y) 
