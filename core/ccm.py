@@ -90,7 +90,19 @@ class CCM(object):
         X = (X - X.mean(axis=0)) / X.std(axis=0)
 
         # Use Gaussian kernel with automatically chosen sigma.
-        sigma = np.median(np.linalg.norm(X[:, None, :] - X[None, :, :], axis=2)) 
+        if X.shape[0]*X.shape[0]*X.shape[1]*8 < 2**30:
+            sigma = np.median(np.linalg.norm(X[:, None, :] - X[None, :, :], axis=2)) 
+        else:
+            # Use Monte Carlo sampling to estimate the median instead of the full tensor, if >1GB.
+            nsamples = 2**20
+            st = np.random.get_state()
+            np.random.seed(0x5EEDED)
+            sigma = np.median(np.linalg.norm((X[np.random.randint(0, X.shape[0], nsamples), :] 
+                                              - X[np.random.randint(0, X.shape[0], nsamples), :]), axis=1))
+            np.random.set_state(st)
+            assert not np.isnan(sigma)
+            assert sigma > 0.0
+
         kernel_X = kernel.GaussianKernel(sigma)
 
         # Transform Y.
