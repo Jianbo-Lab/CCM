@@ -6,6 +6,8 @@ from __future__ import print_function
 import numpy as np
 import tensorflow as tf
 import kernel
+
+
 def center(X):
     """Returns the centered version of the given square matrix, namely
 
@@ -18,11 +20,12 @@ def center(X):
     Returns:
         The row- and column-centered version of X.
     """
-
-    mean_col = tf.reduce_mean(X, axis=0, keep_dims=True)
-    mean_row = tf.reduce_mean(X, axis=1, keep_dims=True)
+    mean_col = tf.reduce_mean(X, axis=0, keepdims=True)
+    mean_row = tf.reduce_mean(X, axis=1, keepdims=True)
     mean_all = tf.reduce_mean(X)
+
     return X - mean_col - mean_row + mean_all
+
 
 def project(v, z):
     """Returns the Euclidean projection of the given vector onto the positive
@@ -41,7 +44,6 @@ def project(v, z):
     Returns:
         The Euclidean projection of v onto the positive simplex of size z.
     """
-
     assert v.ndim == 1
     assert z > 0
 
@@ -51,7 +53,9 @@ def project(v, z):
     mu_cumsum = np.cumsum(mu)
     max_index = np.nonzero(mu * np.arange(1, len(v) + 1) > mu_cumsum - z)[0][-1]
     theta = (mu_cumsum[max_index] - z) / (max_index + 1)
+
     return np.maximum(v - theta, 0)
+
 
 class CCM(object):
     """
@@ -74,7 +78,8 @@ class CCM(object):
             Y, 
             transform_Y,
             epsilon,
-            D_approx = None
+            D_approx=None,
+            batch=None
     ): 
 
         assert isinstance(X, np.ndarray)
@@ -84,7 +89,15 @@ class CCM(object):
 
         n, d = X.shape
         assert Y.shape == (n,)
+
         self.d = d
+        self.n = n
+
+        if batch is None:
+            self.batch = n
+        else:
+            assert n > batch
+            self.batch = batch
 
         # Whitening transform for X.
         X = (X - X.mean(axis=0)) / X.std(axis=0)
@@ -115,7 +128,6 @@ class CCM(object):
             Y_new[Y == values[0]] = -1
             Y_new[Y == values[1]] = 1
             Y = Y_new
-
         elif transform_Y == "one-hot":
             values = sorted(set(Y.ravel()))
             Y_new = np.zeros((n, len(values)))
@@ -127,34 +139,36 @@ class CCM(object):
             Y = Y[:, np.newaxis]
 
         Y = Y - Y.mean(0)
+        self.X = X
+        self.Y = Y.astype(float)
+        self.build_model(kernel_X, D_approx, batch)
 
+    def build_model(self, kernel_X, D_approx, batch):
         # Build graph for loss and gradients computation. 
         with tf.Graph().as_default():
-            self.w = tf.placeholder(tf.float64, shape=d) 
+            self.w = tf.placeholder(tf.float64, shape=self.d) 
             self.inputs = [self.w]
 
+            self.input_X = tf.placeholder(tf.float64, shape=[None, self.d])
+            self.input_Y = tf.placeholder(tf.float64)
+
             if D_approx is None:
-
-                G_X_w = center(kernel_X(X * self.w))
-
-                G_X_w += n * epsilon * np.eye(n)
-
+                G_X_w = center(kernel_X(self.input_X * self.w))
+                G_X_w += self.batch * epsilon * np.eye(self.batch)
                 G_X_w_inv = tf.matrix_inverse(G_X_w)
-
             else:
-
-                U_w = kernel_X.random_features(X * self.w, D_approx)
+                U_w = kernel_X.random_features(self.input_X * self.w, D_approx)
 
                 V_w = tf.matmul(
                         tf.subtract(
-                            tf.eye(n, dtype=tf.float64),
+                            tf.eye(self.batch, dtype=tf.float64),
                             tf.divide(
-                                tf.ones((n,n), dtype=tf.float64),
-                                tf.constant(float(n), dtype=tf.float64))),
+                                tf.ones((self.batch, self.batch), dtype=tf.float64),
+                                tf.constant(float(self.batch), dtype=tf.float64))),
                         U_w)
 
                 # eq. 21, arXiv:1707.01164, omitting constant term
-                
+
                 G_X_w_inv = tf.matmul(
                                 tf.scalar_mul(
                                     tf.constant(-1.0, dtype=tf.float64),
@@ -167,19 +181,18 @@ class CCM(object):
                                                 V_w,
                                                 transpose_a=True),
                                             tf.multiply(
-                                                tf.constant(n * epsilon, dtype=tf.float64),
+                                                tf.constant(self.batch * epsilon, dtype=tf.float64),
                                                 tf.eye(D_approx, dtype=tf.float64)))),
                                     V_w,
                                     transpose_b=True))
 
             self.loss = tf.trace(tf.matmul(
-                    Y, tf.matmul(G_X_w_inv, Y), transpose_a=True))
-
+                    self.input_Y, tf.matmul(G_X_w_inv, self.input_Y), transpose_a=True))
             self.gradients = tf.gradients(self.loss, self.inputs)
 
             self.sess = tf.Session()
 
-    def solve_gradient_descent(self, num_features, learning_rate = 0.001, iterations = 1000, verbose=True):
+    def solve_gradient_descent(self, num_features, learning_rate=0.001, iterations=1000, verbose=True):
 
         assert num_features <= self.d
 
@@ -195,18 +208,34 @@ class CCM(object):
             return w
 
         for iteration in range(1, iterations + 1):
+            index = index = np.random.permutation(self.n)
+            X = self.X[index]
+            Y = self.Y[index]
 
+            iloss = []
             # Compute loss and print.
-            if verbose:
-                loss = self.sess.run(self.loss, feed_dict=dict(
-                    zip(self.inputs, inputs)))
-                print("iteration {} loss {}".format(iteration, loss))
+            for j in range(0, self.n, self.batch):
+                if j + self.batch > self.n:
+                    break
 
-            # Update w with projected gradient method. 
-            gradients = self.sess.run(self.gradients, feed_dict=dict(zip(self.inputs, inputs)))
-            for i, gradient in enumerate(gradients):
-                inputs[i] -= learning_rate * gradient
-            inputs[0] = clip_and_project(inputs[0])
+                tmpX = X[j: j + self.batch]
+                tmpY = Y[j: j + self.batch]
+
+                fd = dict(zip(self.inputs, inputs))
+                fd.update({self.input_X: tmpX, self.input_Y: tmpY})
+
+                loss, gradients = self.sess.run(
+                        [self.loss, self.gradients],
+                        feed_dict=fd)
+                iloss.append(loss)
+
+                # Update w with projected gradient method. 
+                for i, gradient in enumerate(gradients):
+                    inputs[i] -= learning_rate * gradient
+                inputs[0] = clip_and_project(inputs[0])
+
+            if verbose:
+                print("iteration {} loss {}".format(iteration, np.mean(iloss)))
 
         # Compute rank of each feature based on weight.
         # Random permutation to avoid bias due to equal weights.
@@ -215,13 +244,14 @@ class CCM(object):
         permutated_ranks=(-permutated_weights).argsort().argsort()+1
         self.ranks = permutated_ranks[np.argsort(idx)]
 
-
         return inputs[0] 
 
-def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001, 
-    iterations = 1000, D_approx = None, verbose = True): 
+
+def ccm(X, Y, num_features, type_Y, epsilon, learning_rate=0.001, 
+    iterations=1000, D_approx=None, verbose=True, batch=None): 
     """
     This function carries out feature selection via CCM.
+
     Args:
         X: An (n, d) numpy array.
 
@@ -240,10 +270,12 @@ def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001,
 
         verbose: If print loss at each update.
 
+        batch: batch size.
+
     Return:
         ranks: An (d,) numpy array, containing permutations of 
         [1,2,...,d]
-
+        w: An (d,) numpy array, weight of features.
     """
     assert type_Y in ('ordinal','binary','categorical','real-valued')
     if type_Y == 'ordinal' or type_Y == 'real-valued':
@@ -253,29 +285,26 @@ def ccm(X, Y, num_features, type_Y, epsilon, learning_rate = 0.001,
     elif type_Y == 'categorical':
         transform_Y = 'one-hot'
 
-    fs = CCM(X, Y, transform_Y, epsilon, D_approx = D_approx)
+    fs = CCM(X, Y, transform_Y, epsilon, D_approx=D_approx, batch=batch)
     w = fs.solve_gradient_descent(num_features, learning_rate, iterations, verbose)
+
     if verbose:
         print('The weights on featurs are: ', w)
-    ranks = fs.ranks 
-    return ranks
+
+    ranks = fs.ranks
+    w = np.array([w[i - 1] for i in ranks])
+
+    return ranks, w
 
 
-if __name__ == "__main__": 
-    
-    X = np.random.randn(100,10); Y = (X[:,0] > 0).astype(float)
+if __name__ == "__main__":     
+    X = np.random.randn(1000, 10)
+    Y = (X[:, 0] > 0).astype(float)
 
-    epsilon = 0.1; num_features = 1; type_Y = 'binary'
-    print(ccm(X, Y, num_features, type_Y, epsilon)) 
+    epsilon = 0.1
+    num_features = 1
+    type_Y = 'categorical'
+    batch = 128
+    iterations = 10
 
-
-
-
-
-
-
-
-
-
-
-
+    ranks, w = ccm(X, Y, num_features, type_Y, epsilon, batch=batch, iterations=iterations)
